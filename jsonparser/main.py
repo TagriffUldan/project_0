@@ -91,13 +91,16 @@ def parse_rates(df: DataFrame) -> DataFrame:
                                                                  "expiration_date",
                                                                  "negotiated_rate",
                                                                  "negotiated_type",
-                                                                   explode_outer("service_code"),"provider_references")
+                                                                 explode_outer("service_code"),
+                                                                 "provider_references")
     
     return exploded_service_codes
 
 
 
 def process_df(df: DataFrame, transformation: Transformation, chunk_size: int):
+
+    ## TO DO: Separate out the chunking logic from applying the transformation
 
     df_with_chunks = df.withColumn("chunk_id", (col("pos") / chunk_size).cast("int"))
     chunk_ids = df_with_chunks.select("chunk_id").distinct().collect()
@@ -135,7 +138,7 @@ def main():
     df: DataFrame = spark.read.json(json_file_path, schema=schema, multiLine=True) # TO DO schema checks and validations, handle erroneous/improperly structured files
 
 
-    CHUNK_SIZE = 1
+    CHUNK_SIZE = 2
 
     TRANSFORMATIONS = {
         "parse_rates": parse_rates,
@@ -143,18 +146,15 @@ def main():
     }
 
     provider_index_df = df.select("reporting_entity_name", 
-                              "reporting_entity_type",
-                              "last_updated_on", 
-                              "version",
-                              posexplode(col("provider_references")).alias("pos", "provider_references")
-                              )
+                                  "reporting_entity_type",
+                                  "last_updated_on", 
+                                  "version",
+                                  posexplode(col("provider_references")).alias("pos", "provider_references"))
       
 
     in_network_index_df = df.select("reporting_entity_name", 
-                                       "reporting_entity_type", 
-                                       posexplode("in_network").alias("pos","in_network")
-                                       )
-
+                                    "reporting_entity_type", 
+                                    posexplode("in_network").alias("pos","in_network"))
 
     process_df(in_network_index_df, parse_rates, CHUNK_SIZE)
 
