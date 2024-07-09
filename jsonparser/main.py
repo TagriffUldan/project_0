@@ -45,14 +45,14 @@ def parse_provider_chunk(chunk_id, chunk_df):
         "tin_value"
     )
 
-    flattened_df.write.mode('overwrite').option("header", True).csv(f'./data/mini_sample_output/chunk_{chunk_id}/')
+    flattened_df.write.mode('overwrite').option("header", True).csv(f'./data/mini_sample_output/providers/chunk_{chunk_id}/')
 
 
-def parse_rates(df):
+def parse_rates(chunk_id, chunk_df):
     # TO DO: Schema validation. Compare & validate
-    exploded_in_network_df = df.select("reporting_entity_name", "reporting_entity_type", explode("in_network").alias("in_network"))
+    # exploded_in_network_df = df.select("reporting_entity_name", "reporting_entity_type", explode("in_network").alias("in_network"))
 
-    exploded_negotiated_rates_df = exploded_in_network_df.select("reporting_entity_name", "reporting_entity_type",
+    exploded_negotiated_rates_df = chunk_df.select("reporting_entity_name", "reporting_entity_type",
                                                              col("in_network.name").alias("name"),
                                                              col("in_network.billing_code").alias("billing_code"),
                                                              col("in_network.billing_code_type").alias("billing_code_type"),
@@ -79,7 +79,7 @@ def parse_rates(df):
                                                 "description", "negotiation_arrangement", "billing_class","expiration_date",
                                                 "negotiated_rate","negotiated_type", explode_outer("service_code"),"provider_references")
 
-    return exploded_service_codes
+    exploded_service_codes.write.mode('overwrite').option("header", True).csv(f'./data/mini_sample_output/rates/chunk_{chunk_id}/')
 
 def main():
     
@@ -104,26 +104,45 @@ def main():
     df = spark.read.json(json_file_path, schema=schema, multiLine=True) # TO DO schema checks and validations, handle erroneous/improperly structured files
 
 
-    CHUNK_SIZE = 2
+    CHUNK_SIZE = 1
 
-    df_with_index = df.select("reporting_entity_name", 
-                              "reporting_entity_type",
-                              "last_updated_on", 
-                              "version",
-                              posexplode(col("provider_references")).alias("pos", "provider_references")
-                              )
+    # df_with_index = df.select("reporting_entity_name", 
+    #                           "reporting_entity_type",
+    #                           "last_updated_on", 
+    #                           "version",
+    #                           posexplode(col("provider_references")).alias("pos", "provider_references")
+    #                           )
     
-    df_with_index = df_with_index.withColumn("chunk_id", (col("pos") / CHUNK_SIZE).cast("int"))
+    # df_with_index = df_with_index.withColumn("chunk_id", (col("pos") / CHUNK_SIZE).cast("int"))
     
-    chunk_ids = df_with_index.select("chunk_id").distinct().collect()
+    # chunk_ids = df_with_index.select("chunk_id").distinct().collect()
     
-    df_with_index.show(n=5)
+    # df_with_index.show(n=5)
+
+    # for chunk in chunk_ids:
+    #     chunk_id = chunk["chunk_id"]
+    #     chunk_df = df_with_index.filter(col("chunk_id") == chunk_id).drop("pos")
+    #     chunk_df.show(n=5)
+    #     parse_provider_chunk(chunk_id, chunk_df)
+    
+
+
+    exploded_in_network_df = df.select("reporting_entity_name", "reporting_entity_type", posexplode("in_network").alias("pos","in_network"))
+
+
+    exploded_in_network_with_index = exploded_in_network_df.withColumn("chunk_id", (col("pos") / CHUNK_SIZE).cast("int"))
+
+    exploded_in_network_with_index.show(n=5)
+
+    chunk_ids = exploded_in_network_with_index.select("chunk_id").distinct().collect()
 
     for chunk in chunk_ids:
         chunk_id = chunk["chunk_id"]
-        chunk_df = df_with_index.filter(col("chunk_id") == chunk_id).drop("pos")
+        chunk_df = exploded_in_network_with_index.filter(col("chunk_id") == chunk_id).drop("pos")
         chunk_df.show(n=5)
-        parse_provider_chunk(chunk_id, chunk_df)
+        parse_rates(chunk_id, chunk_df)
+
+
 
 
 
