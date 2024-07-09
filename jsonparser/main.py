@@ -45,7 +45,7 @@ def parse_provider_chunk(chunk_id, chunk_df):
         "tin_value"
     )
 
-    flattened_df.write.option("header", True).csv(f'./data/mini_sample_output/chunk_{chunk_id}/')
+    flattened_df.write.mode('overwrite').option("header", True).csv(f'./data/mini_sample_output/chunk_{chunk_id}/')
 
 
 def parse_rates(df):
