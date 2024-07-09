@@ -1,19 +1,14 @@
 from pyspark.sql import SparkSession
 from pyspark import SparkConf
 from schema import SchemaProvider
-from pyspark.sql.functions import explode, col, expr, explode_outer, posexplode
-from pyspark.sql import Row
+from pyspark.sql.functions import explode, col, explode_outer, posexplode
+from pyspark.sql.dataframe import DataFrame
+from typing import Callable
 
-def parse_provider_chunk(chunk_id, chunk_df):
+Transformation = Callable[[DataFrame], DataFrame]
 
-    # exploded_provider_references_df = chunk_df.select("reporting_entity_name", 
-    #                                             "reporting_entity_type", 
-    #                                             "last_updated_on", 
-    #                                             "version",
-    #                                             "chunk_id",
-    #                                             explode("provider_references.").alias("provider_references"))
-
-    exploded_provider_groups_df = chunk_df.select("reporting_entity_name", 
+def parse_provider(df: DataFrame) -> DataFrame:
+    exploded_provider_groups_df = df.select("reporting_entity_name", 
                                                                          "reporting_entity_type", 
                                                                          "last_updated_on",
                                                                          "version",
@@ -45,14 +40,13 @@ def parse_provider_chunk(chunk_id, chunk_df):
         "tin_value"
     )
 
-    flattened_df.write.mode('overwrite').option("header", True).csv(f'./data/mini_sample_output/providers/chunk_{chunk_id}/')
+    return flattened_df
+    
 
 
-def parse_rates(chunk_id, chunk_df):
+def parse_rates(df: DataFrame) -> DataFrame:
     # TO DO: Schema validation. Compare & validate
-    # exploded_in_network_df = df.select("reporting_entity_name", "reporting_entity_type", explode("in_network").alias("in_network"))
-
-    exploded_negotiated_rates_df = chunk_df.select("reporting_entity_name", "reporting_entity_type",
+    exploded_negotiated_rates_df = df.select("reporting_entity_name", "reporting_entity_type",
                                                              col("in_network.name").alias("name"),
                                                              col("in_network.billing_code").alias("billing_code"),
                                                              col("in_network.billing_code_type").alias("billing_code_type"),
@@ -78,8 +72,24 @@ def parse_rates(chunk_id, chunk_df):
     exploded_service_codes = exploded_provider_references.select("reporting_entity_name", "reporting_entity_type", "name", "billing_code", "billing_code_type", "billing_code_type_version",
                                                 "description", "negotiation_arrangement", "billing_class","expiration_date",
                                                 "negotiated_rate","negotiated_type", explode_outer("service_code"),"provider_references")
+    
+    return exploded_service_codes
 
-    exploded_service_codes.write.mode('overwrite').option("header", True).csv(f'./data/mini_sample_output/rates/chunk_{chunk_id}/')
+
+
+def process_df(df: DataFrame, transformation: Transformation, chunk_size: int):
+
+    df_with_chunks = df.withColumn("chunk_id", (col("pos") / chunk_size).cast("int"))
+    chunk_ids = df_with_chunks.select("chunk_id").distinct().collect()
+
+    for chunk in chunk_ids:
+        chunk_id = chunk["chunk_id"]
+        df_chunk = df_with_chunks.filter(col("chunk_id") == chunk_id).drop("pos")
+
+        result = transformation(df_chunk)
+
+        result.write.mode('overwrite').option("header", True).csv(f'./data/mini_sample_output/{transformation.__name__}/chunk_{chunk_id}/')
+
 
 def main():
     
@@ -106,41 +116,26 @@ def main():
 
     CHUNK_SIZE = 1
 
-    # df_with_index = df.select("reporting_entity_name", 
-    #                           "reporting_entity_type",
-    #                           "last_updated_on", 
-    #                           "version",
-    #                           posexplode(col("provider_references")).alias("pos", "provider_references")
-    #                           )
-    
-    # df_with_index = df_with_index.withColumn("chunk_id", (col("pos") / CHUNK_SIZE).cast("int"))
-    
-    # chunk_ids = df_with_index.select("chunk_id").distinct().collect()
-    
-    # df_with_index.show(n=5)
+    TRANSFORMATIONS = {
+        "parse_rates": parse_rates,
+        "parse_provider": parse_provider
+    }
 
-    # for chunk in chunk_ids:
-    #     chunk_id = chunk["chunk_id"]
-    #     chunk_df = df_with_index.filter(col("chunk_id") == chunk_id).drop("pos")
-    #     chunk_df.show(n=5)
-    #     parse_provider_chunk(chunk_id, chunk_df)
-    
+    provider_index_df = df.select("reporting_entity_name", 
+                              "reporting_entity_type",
+                              "last_updated_on", 
+                              "version",
+                              posexplode(col("provider_references")).alias("pos", "provider_references")
+                              )
+      
+
+    in_network_index_df = df.select("reporting_entity_name", 
+                                       "reporting_entity_type", 
+                                       posexplode("in_network").alias("pos","in_network")
+                                       )
 
 
-    exploded_in_network_df = df.select("reporting_entity_name", "reporting_entity_type", posexplode("in_network").alias("pos","in_network"))
-
-
-    exploded_in_network_with_index = exploded_in_network_df.withColumn("chunk_id", (col("pos") / CHUNK_SIZE).cast("int"))
-
-    exploded_in_network_with_index.show(n=5)
-
-    chunk_ids = exploded_in_network_with_index.select("chunk_id").distinct().collect()
-
-    for chunk in chunk_ids:
-        chunk_id = chunk["chunk_id"]
-        chunk_df = exploded_in_network_with_index.filter(col("chunk_id") == chunk_id).drop("pos")
-        chunk_df.show(n=5)
-        parse_rates(chunk_id, chunk_df)
+    process_df(in_network_index_df, parse_rates, CHUNK_SIZE)
 
 
 
